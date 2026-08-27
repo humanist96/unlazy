@@ -75,6 +75,11 @@ node ~/.claude/skills/unlazy/scripts/gate-check.mjs --status GATES.md
 node ~/.claude/skills/unlazy/scripts/gate-check.mjs --json --reverify GATES.md
 ```
 
+
+`--gate <id>`를 붙이면 게이트 하나씩 승인·실행한다. 파일 안의 모든 미승인 명령을
+한꺼번에 승인하지 않아도 된다. 좁혀 실행해도 **출력되는 판정은 여전히 원장 전체를
+대상으로** 하므로, 일부만 통과시켜 완료 증명서를 받을 수는 없다.
+
 `--status`는 어떤 경우에도 명령을 실행하지 않는다. 명령을 전부 읽고 이해한 뒤에만
 승인한다.
 

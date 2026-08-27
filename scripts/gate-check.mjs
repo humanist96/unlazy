@@ -36,6 +36,8 @@ run modes:
   --cwd DIR             default CHECK directory (explicit: file dir; discovered: --root)
   --output-encoding E   decode CHECK output as utf8 (default) or cp949
                         (UNLAZY_OUTPUT_ENCODING)
+  --gate ID             run and approve only these gates, repeatable; the
+                        printed verdict still covers every gate
 
 pipeline actions:
   --claim --scope ID [--leaf NAME]   atomically claim the leaf's OWNS paths
@@ -67,7 +69,10 @@ const FLAG_OPTIONS = new Set([
 const VALUE_OPTIONS = new Set([
   "--scope", "--leaf", "--timeout", "--jobs", "--cwd", "--root",
   "--log", "--bind", "--shell", "--output-encoding",
+  "--log", "--bind", "--shell", "--gate",
 ]);
+// Options that accumulate instead of rejecting a second occurrence.
+const REPEATABLE_OPTIONS = new Set(["--gate"]);
 const MAX_OUTPUT_BYTES = 1024 * 1024;
 const MAX_APPROVAL_BYTES = 256 * 1024;
 const REGEX_TIMEOUT_MS = 250;
@@ -112,6 +117,13 @@ function parseArgs(argv) {
       const name = equals === -1 ? arg : arg.slice(0, equals);
       if (!VALUE_OPTIONS.has(name)) return { error: "unknown option " + name };
       const key = name.slice(2);
+      if (REPEATABLE_OPTIONS.has(name)) {
+        const value = equals === -1 ? argv[++index] : arg.slice(equals + 1);
+        if (value === undefined || value === "") return { error: name + " needs a value" };
+        if (options[key] === undefined) options[key] = [];
+        options[key].push(value);
+        continue;
+      }
       if (options[key] !== undefined) return { error: "duplicate option " + name };
       const value = equals === -1 ? argv[++index] : arg.slice(equals + 1);
       if (value === undefined || value === "") return { error: name + " needs a value" };
@@ -184,8 +196,8 @@ if (opt.leaf && !opt.claim && !opt.release) failUsage("--leaf is only valid with
 // not produce.
 if (opt.json && action) failUsage("--json reports a gate reduction; it cannot be combined with " + action);
 if (opt.json) humanOutputToStderr = true;
-if ((opt.timeout || opt.jobs || opt.shell || opt.cwd || opt["output-encoding"]) && (action || opt.status)) {
-  failUsage("--timeout, --jobs, --shell, --cwd, and --output-encoding are execution options only");
+if ((opt.timeout || opt.jobs || opt.shell || opt.cwd || opt["output-encoding"] || opt.gate) && (action || opt.status)) {
+  failUsage("--timeout, --jobs, --shell, --cwd, --output-encoding, and --gate are execution options only");
 }
 
 const root = resolve(opt.root || process.cwd());
@@ -790,10 +802,45 @@ async function runRolling(tasks, limit) {
   return results;
 }
 
+// --gate narrows what runs and what may be approved, so a reviewer can
+// consent to one oracle at a time instead of to every pending oracle in a
+// file at once.
+//
+// It deliberately does not narrow the summary. Reducing the verdict to the
+// selected gates would let --gate G1 print ALL MET while G2 sits unmet, which
+// is a completion certificate for a subset and the exact failure this tool
+// exists to prevent. The run is narrowed; the reading of the ledger is not.
+const gateKey = (file, id) => resolve(file) + "\0" + id;
+let selectedGates = null;
+if (opt.gate) {
+  selectedGates = new Set();
+  for (const requested of opt.gate) {
+    const matches = [];
+    for (const ledger of ledgers) {
+      for (const gate of ledger.doc.gates) {
+        const qualified = qualify(ledger.file, gate.id);
+        if (requested === gate.id || requested === qualified) matches.push({ ledger, gate, qualified });
+      }
+    }
+    if (!matches.length) {
+      failUsage("--gate " + requested + " names no gate in the targeted ledgers");
+    }
+    // A bare id can repeat across ledgers. Selecting all of them silently
+    // would approve oracles the reviewer never asked to see, so ask for the
+    // qualified form instead of guessing.
+    if (matches.length > 1) {
+      failUsage("--gate " + requested + " is ambiguous across " +
+        matches.map((match) => match.qualified).join(", ") + "; name one qualified id");
+    }
+    selectedGates.add(gateKey(matches[0].ledger.file, matches[0].gate.id));
+  }
+}
+
 const pending = [];
 for (const ledger of ledgers) {
   for (const gate of ledger.doc.gates) {
     if (ledger.doc.abandoned.has(gate.id) || !gate.check) continue;
+    if (selectedGates && !selectedGates.has(gateKey(ledger.file, gate.id))) continue;
     const state = gateState(gate, ledger.doc.abandoned);
     if (opt.status || (!opt.reverify && state === "met")) continue;
     const cwd = resolvedGateCwd(gate, ledger.file);
@@ -1063,6 +1110,10 @@ unmetIds.push(...aggregateDispatch.blocking);
 if (approvalInfrastructureFailures) {
   console.error("gate-check: infrastructure failure prevented " + approvalInfrastructureFailures + " approval(s)");
   process.exit(2);
+}
+if (selectedGates) {
+  console.log("  (ran only " + opt.gate.join(", ") +
+    "; the verdict below still covers every gate in the targeted ledgers)");
 }
 if (effectiveUnmet === 0 && totalAbandoned === 0) {
   console.log("ALL MET (" + totalMet + " met" + verifyNote + ")" + where);

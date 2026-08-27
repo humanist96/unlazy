@@ -32,6 +32,8 @@ run modes:
   --timeout S           per-check timeout, integer seconds 1..86400 (default 120)
   --shell PATH          command shell (UNLAZY_SHELL, then platform default)
   --cwd DIR             default CHECK directory (explicit: file dir; discovered: --root)
+  --output-encoding E   decode CHECK output as utf8 (default) or cp949
+                        (UNLAZY_OUTPUT_ENCODING)
 
 pipeline actions:
   --claim --scope ID [--leaf NAME]   atomically claim the leaf's OWNS paths
@@ -58,7 +60,7 @@ const FLAG_OPTIONS = new Set([
 ]);
 const VALUE_OPTIONS = new Set([
   "--scope", "--leaf", "--timeout", "--jobs", "--cwd", "--root",
-  "--log", "--bind", "--shell",
+  "--log", "--bind", "--shell", "--output-encoding",
 ]);
 const MAX_OUTPUT_BYTES = 1024 * 1024;
 const MAX_APPROVAL_BYTES = 256 * 1024;
@@ -164,8 +166,8 @@ if (action && (opt.status || opt.reverify || opt.approve)) failUsage(action + " 
 if (action && fileArgs.length) failUsage(action + " cannot be combined with explicit files");
 if (fileArgs.length && opt.scope) failUsage("explicit files and --scope are mutually exclusive");
 if (opt.leaf && !opt.claim && !opt.release) failUsage("--leaf is only valid with --claim or --release");
-if ((opt.timeout || opt.jobs || opt.shell || opt.cwd) && (action || opt.status)) {
-  failUsage("--timeout, --jobs, --shell, and --cwd are execution options only");
+if ((opt.timeout || opt.jobs || opt.shell || opt.cwd || opt["output-encoding"]) && (action || opt.status)) {
+  failUsage("--timeout, --jobs, --shell, --cwd, and --output-encoding are execution options only");
 }
 
 const root = resolve(opt.root || process.cwd());
@@ -317,7 +319,49 @@ function resolveShell(raw) {
   failUsage("cannot resolve command shell " + JSON.stringify(requested) + " from PATH");
 }
 
+// A check's output is bytes, and turning it into text needs a declared answer.
+// The default is utf8 and stays that way, but a console whose code page is
+// cp949, which is the Windows default across Korea, makes a native tool emit
+// cp949 bytes. Decoding those as utf8 does not raise an error: it produces
+// mojibake, so a Korean EXPECT silently stops matching text that is really
+// there, and a Korean failure message stops being detectable.
+//
+// Auto-detection is deliberately not offered. An oracle has to be
+// deterministic, and a heuristic that reads one run as utf8 and the next as
+// cp949 would make the gate's meaning depend on its output.
+const OUTPUT_ENCODINGS = new Map([
+  ["utf8", { name: "utf8", decoder: null }],
+  ["utf-8", { name: "utf8", decoder: null }],
+  ["cp949", { name: "cp949", decoder: "euc-kr" }],
+  ["euc-kr", { name: "cp949", decoder: "euc-kr" }],
+  ["euckr", { name: "cp949", decoder: "euc-kr" }],
+  ["ms949", { name: "cp949", decoder: "euc-kr" }],
+]);
+
+function resolveOutputEncoding(raw) {
+  const requested = String(raw || process.env.UNLAZY_OUTPUT_ENCODING || "utf8").trim().toLowerCase();
+  const found = OUTPUT_ENCODINGS.get(requested);
+  if (!found) {
+    failUsage("--output-encoding accepts utf8 or cp949, got " + JSON.stringify(requested));
+  }
+  // Probing only outside status mode keeps the always-safe inspection path
+  // working on a build that cannot decode the requested encoding.
+  if (found.decoder && !opt.status) {
+    try {
+      new TextDecoder(found.decoder);
+    } catch {
+      failUsage("this Node build cannot decode " + found.name +
+        "; it needs a full-ICU build, so re-run with --output-encoding utf8");
+    }
+  }
+  return found;
+}
+
 const shell = opt.status ? "(not used: status mode)" : resolveShell(opt.shell);
+const outputEncoding = resolveOutputEncoding(opt["output-encoding"]);
+const decodeOutput = outputEncoding.decoder
+  ? (buffer) => new TextDecoder(outputEncoding.decoder).decode(buffer)
+  : (buffer) => buffer.toString("utf8");
 const pathValue = String(process.env.PATH || "");
 const pathHash = sha256(pathValue).slice(0, 12);
 const pathCount = pathValue ? pathValue.split(delimiter).length : 0;
@@ -346,6 +390,11 @@ function oracle(file, gate) {
     regexStartupTimeoutMs: REGEX_STARTUP_TIMEOUT_MS,
     maxRegexWorkers: MAX_REGEX_WORKERS,
     platform: process.platform,
+    // Omitted entirely at the default, so ledgers approved before this option
+    // existed serialise byte for byte as before and keep their approvals. The
+    // decode changes what EXPECT is matched against, so it belongs in the
+    // approval the same way the shell and the limits do.
+    outputEncoding: outputEncoding.name === "utf8" ? undefined : outputEncoding.name,
     path: pathValue,
   };
 }
@@ -493,6 +542,7 @@ function printOracle(file, gate, prefix) {
   console.log("    EXPECT: " + value.expect);
   console.log("    CWD: " + value.cwd);
   console.log("    SHELL: " + value.shell);
+  if (value.outputEncoding) console.log("    OUTPUT-ENCODING: " + value.outputEncoding);
   console.log("    PATH: " + pathTranscript);
 }
 
@@ -583,8 +633,11 @@ function runCheck(task) {
       if (timeoutTimer) clearTimeout(timeoutTimer);
       if (closeStreamsTimer) clearTimeout(closeStreamsTimer);
       if (forceSettleTimer) clearTimeout(forceSettleTimer);
-      const stdout = Buffer.concat(chunks.stdout).toString("utf8");
-      const stderr = Buffer.concat(chunks.stderr).toString("utf8");
+      // Decode the whole stream at once. The chunks are buffers precisely so a
+      // multi-byte character split across two reads is rejoined before it is
+      // decoded, which matters more for cp949 and utf8 than for ascii output.
+      const stdout = decodeOutput(Buffer.concat(chunks.stdout));
+      const stderr = decodeOutput(Buffer.concat(chunks.stderr));
       const output = stdout + (stdout && stderr ? "\n" : "") + stderr;
       const match = timedOut || overflow || spawnError
         ? { matched: false }
@@ -759,8 +812,12 @@ function failureOutput(output, max = 480) {
 function evidenceFor(result) {
   const clean = (value) => terminalSafe(value).replace(/[\r\n\t]+/g, " ");
   const fingerprint = outputFingerprint(result.output);
+  // Recorded only when it is not the default, so existing evidence keeps its
+  // shape. A non-default decode is the kind of thing a later reader needs, as
+  // the same bytes match a different expectation under a different encoding.
+  const encoding = outputEncoding.name === "utf8" ? "" : "; output-encoding=" + outputEncoding.name;
   return ("exit=0; shell=" + clean(shell) + "; cwd=" + clean(result.cwd) +
-    "; path=" + pathEvidence + "; EXPECT=matched; output-sha256=" + fingerprint.sha256 +
+    "; path=" + pathEvidence + encoding + "; EXPECT=matched; output-sha256=" + fingerprint.sha256 +
     "; output-bytes=" + fingerprint.bytes).slice(0, 900);
 }
 

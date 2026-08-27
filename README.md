@@ -104,7 +104,7 @@ Use the advisory, non-executing `scripts/gate-lint.mjs` to catch mechanically we
 
 ## Shell and PATH
 
-The checker uses `--shell` first, then `UNLAZY_SHELL`, then Node's platform default shell. That default is `/bin/sh` on Unix and `process.env.ComSpec` on Windows with the platform fallback. Checks inherit the launch environment, including `PATH`.
+The checker uses `--shell` first, then `UNLAZY_SHELL`, then Node's platform default shell. That default is `/bin/sh` on Unix and `process.env.ComSpec` on Windows with the platform fallback. Checks inherit the launch environment, including `PATH`. Check output is decoded as UTF-8 unless `--output-encoding cp949` or `UNLAZY_OUTPUT_ENCODING` selects otherwise, which matters where the console code page is cp949: decoding those bytes as UTF-8 raises no error, it just produces text a Korean `EXPECT:` can never match.
 
 This matters on Windows: a checker launched from Git Bash can see Unix-like tools that the same checker launched from PowerShell does not. `--shell` changes the interpreter; it does not install `grep`, `tail`, `tr`, or other external programs. Portable examples call repository-owned Node scripts.
 

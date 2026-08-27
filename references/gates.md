@@ -72,7 +72,7 @@ The checker resolves its shell in this order:
 2. `UNLAZY_SHELL`
 3. `/bin/sh` on Unix, or `process.env.ComSpec` on Windows with `cmd.exe` as the fallback name
 
-The child process inherits the checker's environment, including `PATH`. Node documents that shell commands use the platform shell and inherited environment; Microsoft documents that `cmd.exe` searches the current directory and then `PATH` for executable extensions. Launching the checker from Git Bash can therefore expose tools that the same command launched from PowerShell does not. A shell override changes the interpreter, not the installed programs or inherited `PATH`.
+The child process inherits the checker's environment, including `PATH`. Output is decoded as UTF-8 unless `--output-encoding cp949` or `UNLAZY_OUTPUT_ENCODING` says otherwise; the resolved value is part of the approval and appears in evidence when it is not the default. Auto-detection is deliberately not offered, because an oracle whose reading of its own output could change between runs is not deterministic. Node documents that shell commands use the platform shell and inherited environment; Microsoft documents that `cmd.exe` searches the current directory and then `PATH` for executable extensions. Launching the checker from Git Bash can therefore expose tools that the same command launched from PowerShell does not. A shell override changes the interpreter, not the installed programs or inherited `PATH`.
 
 Prefer repository-owned Node scripts in portable gates:
 

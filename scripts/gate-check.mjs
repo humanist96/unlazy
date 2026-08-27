@@ -26,6 +26,8 @@ const HELP = `usage: gate-check.mjs [options] [file ...]
 run modes:
   (default)             run unmet runnable gates and update their ledgers
   --status              report only; never execute, approve, or write
+  --json                print one machine-readable result object on stdout and
+                        move the human transcript to stderr
   --reverify            re-run every runnable gate and demote stale failures
   --approve             approve each exact pending oracle, then run it
   --jobs N              rolling concurrency, integer 1..64 (default 1)
@@ -52,12 +54,15 @@ resolved CWD, resolved shell, timeout, output/regex limits, platform, PATH, and
 the digests of any files an optional indented DEPS: list names.
 Approvals live outside the repository under ~/.unlazy/approved by default.
 
+With --json, stdout carries one object on the verdict exits (0 and 1). Usage,
+parse, and infrastructure failures report on stderr and exit 2 without it.
+
 exit codes: 0 all met/action succeeded; 1 unmet; 2 usage/parse/infrastructure;
             3 lease conflict.`;
 
 const FLAG_OPTIONS = new Set([
   "--status", "--reverify", "--approve", "--claim", "--release",
-  "--list-scopes", "--help", "-h",
+  "--list-scopes", "--json", "--help", "-h",
 ]);
 const VALUE_OPTIONS = new Set([
   "--scope", "--leaf", "--timeout", "--jobs", "--cwd", "--root",
@@ -77,10 +82,17 @@ const CHECK_SUPERVISOR = fileURLToPath(new URL("./lib/check-supervisor.mjs", imp
 // sink. Each console call still receives its own trailing newline.
 const UNSAFE_TERMINAL_RE = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
 const terminalSafe = (value) => String(value).replace(UNSAFE_TERMINAL_RE, " ");
-for (const method of ["log", "error"]) {
-  const write = console[method].bind(console);
-  console[method] = (...values) => write(...values.map(terminalSafe));
-}
+// Under --json, stdout carries exactly one object, so the human transcript
+// moves to stderr rather than being suppressed. Suppressing it would let a
+// caller pipe past the approval transcript without ever reading the oracle it
+// is consenting to, and that is the one thing that has to stay in front of a
+// person. The flag is mutable because this wrapper is installed before the
+// options are parsed.
+let humanOutputToStderr = false;
+const rawWrite = { log: console.log.bind(console), error: console.error.bind(console) };
+console.log = (...values) =>
+  (humanOutputToStderr ? rawWrite.error : rawWrite.log)(...values.map(terminalSafe));
+console.error = (...values) => rawWrite.error(...values.map(terminalSafe));
 
 function parseArgs(argv) {
   const options = {};
@@ -167,6 +179,11 @@ if (action && (opt.status || opt.reverify || opt.approve)) failUsage(action + " 
 if (action && fileArgs.length) failUsage(action + " cannot be combined with explicit files");
 if (fileArgs.length && opt.scope) failUsage("explicit files and --scope are mutually exclusive");
 if (opt.leaf && !opt.claim && !opt.release) failUsage("--leaf is only valid with --claim or --release");
+// --json describes a gate reduction. A pipeline action reports a different
+// thing entirely, so accepting the flag there would promise a shape this does
+// not produce.
+if (opt.json && action) failUsage("--json reports a gate reduction; it cannot be combined with " + action);
+if (opt.json) humanOutputToStderr = true;
 if ((opt.timeout || opt.jobs || opt.shell || opt.cwd || opt["output-encoding"]) && (action || opt.status)) {
   failUsage("--timeout, --jobs, --shell, --cwd, and --output-encoding are execution options only");
 }
@@ -937,6 +954,7 @@ let reverified = 0;
 const unmetIds = [];
 const abandonedIds = [];
 const finalStates = new Map();
+const jsonGates = [];
 for (const result of results) {
   if (opt.reverify && result.wasMet && !staleResults.has(resultKey(result.file, result.gate.id))) reverified++;
 }
@@ -945,6 +963,14 @@ for (const ledger of ledgers) {
   for (const gate of ledger.doc.gates) {
     const state = gateState(gate, ledger.doc.abandoned);
     finalStates.set(resultKey(ledger.file, gate.id), state);
+    jsonGates.push({
+      file: ledger.file,
+      id: gate.id,
+      qualified: qualify(ledger.file, gate.id),
+      title: gate.title,
+      state,
+      runnable: Boolean(gate.check && gate.expect),
+    });
     if (state === "abandoned") {
       totalAbandoned++;
       abandonedIds.push(qualify(ledger.file, gate.id));
@@ -993,6 +1019,45 @@ for (const [key, label] of staleResults) {
   if (state === "met" || state === undefined) extraUnmet.set(key, label + " (stale result discarded)");
 }
 const effectiveUnmet = totalUnmet + extraUnmet.size + aggregateDispatch.blocking.length;
+
+// Reports the same numbers the text summary prints, from the same variables,
+// so the two readings of one run cannot disagree. JSON.stringify escapes
+// control characters, so the object needs no separate terminal sanitising;
+// diagnostic text is passed through the same filter anyway for a consumer
+// that prints it.
+function emitJson(verdict) {
+  if (!opt.json) return;
+  const report = {
+    schema: 1,
+    verdict,
+    mode: opt.status ? "status" : opt.reverify ? "reverify" : opt.approve ? "approve" : "run",
+    scope: scope || null,
+    counts: {
+      gates: jsonGates.length,
+      met: Math.max(0, totalMet - extraUnmet.size),
+      unmet: effectiveUnmet,
+      abandoned: totalAbandoned,
+    },
+    unmet: unmetIds,
+    abandoned: abandonedIds,
+    gates: jsonGates,
+    dispatch: {
+      blocking: aggregateDispatch.blocking,
+      abandoned: aggregateDispatch.abandoned,
+    },
+    executed: results.map((result) => ({
+      qualified: qualify(result.file, result.gate.id),
+      ok: Boolean(result.ok),
+      exitCode: result.exitCode,
+      matched: Boolean(result.matched),
+      error: result.error ? terminalSafe(result.error) : null,
+    })),
+  };
+  if (opt.reverify) {
+    report.reverify = { reran: results.length, previouslyMetReverified: reverified };
+  }
+  process.stdout.write(JSON.stringify(report, null, 2) + "\n");
+}
 unmetIds.push(...extraUnmet.values());
 unmetIds.push(...aggregateDispatch.blocking);
 if (approvalInfrastructureFailures) {
@@ -1001,6 +1066,7 @@ if (approvalInfrastructureFailures) {
 }
 if (effectiveUnmet === 0 && totalAbandoned === 0) {
   console.log("ALL MET (" + totalMet + " met" + verifyNote + ")" + where);
+  emitJson("all-met");
   process.exit(0);
 }
 if (totalAbandoned) {
@@ -1015,4 +1081,5 @@ if (effectiveUnmet) {
     (totalAbandoned ? ", abandoned: " + totalAbandoned : "") + verifyNote + ")" + where);
   console.log("  " + unmetIds.slice(0, 12).join(", ") + (unmetIds.length > 12 ? ", +" + (unmetIds.length - 12) + " more" : ""));
 }
+emitJson(totalAbandoned ? "handoff-required" : "unmet");
 process.exit(1);

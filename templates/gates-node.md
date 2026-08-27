@@ -3,8 +3,8 @@
 Scope: integrate children <explicit child ids> into one verified result
 
 - [ ] N1: every named child leaf is reverified from its exact ledger
-  CHECK: node <skill-dir>/scripts/gate-check.mjs --root . --cwd . --reverify --jobs 1 .unlazy/<scope>/gates/leaf-<a>.md .unlazy/<scope>/gates/leaf-<b>.md
-  EXPECT: ALL MET
+  CHECK: node <skill-dir>/scripts/gate-check.mjs --json --root . --cwd . --reverify --jobs 1 .unlazy/<scope>/gates/leaf-<a>.md .unlazy/<scope>/gates/leaf-<b>.md
+  EXPECT: /"verdict": "all-met"/
   EVIDENCE: pending
 
 - [ ] N2: child interfaces match the contract in PLAN.md

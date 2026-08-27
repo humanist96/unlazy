@@ -66,6 +66,15 @@ GATES.md 작성 → --status로 명령 검토 → --approve로 승인·실행 �
 node ~/.claude/skills/unlazy/scripts/gate-check.mjs --status GATES.md
 ```
 
+
+어느 모드에든 `--json`을 붙이면 표준 출력에 기계 판독용 객체 하나가 나오고, 사람용
+전사는 표준 오류로 간다. 부모가 자식을 검증할 때는 출력 문구를 substring으로 맞추지
+말고 verdict를 읽는다.
+
+```bash
+node ~/.claude/skills/unlazy/scripts/gate-check.mjs --json --reverify GATES.md
+```
+
 `--status`는 어떤 경우에도 명령을 실행하지 않는다. 명령을 전부 읽고 이해한 뒤에만
 승인한다.
 

@@ -670,6 +670,11 @@ function runCheck(task) {
     const settle = async (exitCode, signal) => {
       if (closed) return;
       closed = true;
+      // Stamped when the process closed, not when the ledger is written. Under
+      // --jobs several checks finish while their evidence is still queued in
+      // ledger order, and a write-time stamp would report one moment for all
+      // of them.
+      const finishedAt = new Date().toISOString();
       if (timeoutTimer) clearTimeout(timeoutTimer);
       if (closeStreamsTimer) clearTimeout(closeStreamsTimer);
       if (forceSettleTimer) clearTimeout(forceSettleTimer);
@@ -689,6 +694,7 @@ function runCheck(task) {
             : match.error || null;
       done({
         ...task, output, exitCode, signal, matched: Boolean(match.matched), error,
+        finishedAt,
         ok: !error && exitCode === 0 && Boolean(match.matched),
       });
     };
@@ -870,7 +876,14 @@ function evidenceFor(result) {
   // shape. A non-default decode is the kind of thing a later reader needs, as
   // the same bytes match a different expectation under a different encoding.
   const encoding = outputEncoding.name === "utf8" ? "" : "; output-encoding=" + outputEncoding.name;
-  return ("exit=0; shell=" + clean(shell) + "; cwd=" + clean(result.cwd) +
+  // Evidence answered what passed and where, but never when, so nothing
+  // separated yesterday's green run from this morning's. Placed after the
+  // shell value because the line has always opened exit=0; shell=, and the
+  // working directory behind it can be long enough that a stamp there would
+  // be the first thing the 900-character cap drops. This reads the local
+  // system clock: it dates and orders a run, it does not attest to one.
+  const verifiedAt = result.finishedAt || new Date().toISOString();
+  return ("exit=0; shell=" + clean(shell) + "; verified-at=" + verifiedAt + "; cwd=" + clean(result.cwd) +
     "; path=" + pathEvidence + encoding + "; EXPECT=matched; output-sha256=" + fingerprint.sha256 +
     "; output-bytes=" + fingerprint.bytes).slice(0, 900);
 }

@@ -69,6 +69,12 @@ Re-run all runnable gates, including gates already marked complete:
 node <path-to-skill>/scripts/gate-check.mjs --reverify GATES.md
 ```
 
+Add `--json` to any of these to get one machine-readable object on standard output, with the human transcript on standard error. A parent verifying a child should match its verdict rather than a substring of the printed summary:
+
+```text
+node <path-to-skill>/scripts/gate-check.mjs --json --reverify .unlazy/api/gates/leaf-1.md
+```
+
 Use `--help` for the complete current CLI.
 
 ## The gate contract

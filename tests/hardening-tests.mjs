@@ -51,7 +51,14 @@ function run(script, args, options = {}) {
       maxBuffer: 16 * 1024 * 1024,
       env: { ...process.env, ...(options.env || {}) },
     }, (error, stdout, stderr) => {
-      done({ code: error ? (typeof error.code === "number" ? error.code : 1) : 0, out: (stdout || "") + (stderr || "") });
+      // stdout and stderr are also returned separately, because --json puts a
+      // parseable object on one and the human transcript on the other.
+      done({
+        code: error ? (typeof error.code === "number" ? error.code : 1) : 0,
+        out: (stdout || "") + (stderr || ""),
+        stdout: stdout || "",
+        stderr: stderr || "",
+      });
     });
     if (options.stdin !== undefined) child.stdin.end(options.stdin);
   });
@@ -886,6 +893,124 @@ test("posix integration: an exited shell leader still has its ordinary descendan
 
 let passed = 0;
 const failures = [];
+// --json: a parent verifying a child had only the printed summary to read, so
+// it matched on substrings like "ALL MET". That is the same weak-oracle habit
+// the gate contract warns about, applied to the checker's own output.
+
+const mixedLedger = (checkPath) =>
+  "# Gates: mixed\n\n" +
+  gate("G1", "runnable and met", "node " + checkPath, "OK") +
+  gate("G2", "judged by hand", null, null) +
+  gate("G3", "impossible now", "node " + checkPath, "never") +
+  "ABANDON: G3 the external system was decommissioned, handed to operations\n";
+
+test("json: stdout carries one parseable object and the transcript moves to stderr", async () => {
+  const s = sandbox();
+  try {
+    s.write("ok.mjs", "console.log('OK');\n");
+    s.write("GATES.md", mixedLedger("ok.mjs"));
+    const result = await gateRun(s, ["--json"]);
+
+    const report = JSON.parse(result.stdout);
+    assert(report.schema === 1, "schema: " + report.schema);
+    assert(report.verdict === "handoff-required", "verdict: " + report.verdict);
+
+    // The approval transcript must still be produced. Hiding it would let a
+    // caller pipe past the one thing a person has to read before consenting.
+    has(result.stderr, "APPROVAL REQUIRED");
+    has(result.stderr, "CHECK: node ok.mjs");
+    assert(!result.stdout.includes("APPROVAL REQUIRED"),
+      "stdout must stay parseable: " + result.stdout.slice(0, 200));
+  } finally { s.cleanup(); }
+});
+
+test("json: the reported counts are the ones the text summary prints", async () => {
+  const s = sandbox();
+  try {
+    // Two readings of one run must not be able to disagree, so this compares
+    // them directly rather than trusting that both were derived correctly.
+    s.write("ok.mjs", "console.log('OK');\n");
+    s.write("GATES.md", mixedLedger("ok.mjs"));
+    await gateRun(s, []);
+
+    const text = await gateRun(s, [], { approve: false });
+    const json = JSON.parse((await gateRun(s, ["--json"], { approve: false })).stdout);
+
+    const handoff = /HANDOFF REQUIRED: (\d+) abandoned \(met: (\d+), unmet: (\d+)\)/.exec(text.out);
+    assert(handoff, "expected a handoff summary, got: " + text.out);
+    assert(Number(handoff[1]) === json.counts.abandoned, "abandoned: " + handoff[1] + " vs " + json.counts.abandoned);
+    assert(Number(handoff[2]) === json.counts.met, "met: " + handoff[2] + " vs " + json.counts.met);
+    assert(Number(handoff[3]) === json.counts.unmet, "unmet: " + handoff[3] + " vs " + json.counts.unmet);
+
+    assert(json.counts.gates === 3, "gates: " + json.counts.gates);
+    assert(json.abandoned.length === 1 && json.abandoned[0].endsWith(":G3"), JSON.stringify(json.abandoned));
+    const states = Object.fromEntries(json.gates.map((entry) => [entry.id, entry.state]));
+    assert(states.G1 === "met" && states.G2 === "unmet" && states.G3 === "abandoned", JSON.stringify(states));
+    assert(json.gates.find((entry) => entry.id === "G2").runnable === false, "G2 is manual");
+  } finally { s.cleanup(); }
+});
+
+test("json: each verdict and exit code pair is reported", async () => {
+  const s = sandbox();
+  try {
+    s.write("ok.mjs", "console.log('OK');\n");
+
+    s.write("GATES.md", gate("G1", "met", "node ok.mjs", "OK"));
+    const met = await gateRun(s, ["--json"]);
+    assert(met.code === 0, met.out);
+    assert(JSON.parse(met.stdout).verdict === "all-met", met.stdout);
+
+    s.write("GATES.md", gate("G1", "met", "node ok.mjs", "OK") + gate("G2", "manual", null, null));
+    const unmet = await gateRun(s, ["--json"], { approve: false });
+    assert(unmet.code === 1, unmet.out);
+    assert(JSON.parse(unmet.stdout).verdict === "unmet", unmet.stdout);
+  } finally { s.cleanup(); }
+});
+
+test("json: status mode reports without executing anything", async () => {
+  const s = sandbox();
+  try {
+    s.write("ok.mjs", "require('fs').writeFileSync('EXECUTED', 'ran');\nconsole.log('OK');\n");
+    s.write("GATES.md", gate("G1", "runnable", "node ok.mjs", "OK"));
+    const result = await gateRun(s, ["--status", "--json"]);
+
+    const report = JSON.parse(result.stdout);
+    assert(report.mode === "status", report.mode);
+    assert(report.executed.length === 0, JSON.stringify(report.executed));
+    assert(!existsSync(join(s.dir, "EXECUTED")), "status must never execute a CHECK");
+  } finally { s.cleanup(); }
+});
+
+test("json: executed checks report their outcome, and a pipeline action refuses the flag", async () => {
+  const s = sandbox();
+  try {
+    s.write("ok.mjs", "console.log('OK');\n");
+    s.write("GATES.md", gate("G1", "met", "node ok.mjs", "OK"));
+    const report = JSON.parse((await gateRun(s, ["--json"])).stdout);
+    assert(report.executed.length === 1, JSON.stringify(report.executed));
+    const only = report.executed[0];
+    assert(only.ok === true && only.exitCode === 0 && only.matched === true && only.error === null,
+      JSON.stringify(only));
+
+    // A pipeline action reports something else entirely, so accepting the flag
+    // there would promise a shape this never produces.
+    const refused = await gateRun(s, ["--json", "--claim", "--scope", "api"], { approve: false });
+    assert(refused.code === 2, refused.out);
+    has(refused.out, "cannot be combined with --claim");
+  } finally { s.cleanup(); }
+});
+
+test("json: omitting the flag leaves the printed output on stdout unchanged", async () => {
+  const s = sandbox();
+  try {
+    s.write("ok.mjs", "console.log('OK');\n");
+    s.write("GATES.md", gate("G1", "met", "node ok.mjs", "OK"));
+    const result = await gateRun(s, []);
+    has(result.stdout, "ALL MET");
+    assert(result.stdout.includes("PASS "), "the pass line belongs on stdout without --json");
+  } finally { s.cleanup(); }
+});
+
 for (const item of tests) {
   try {
     await item.fn();

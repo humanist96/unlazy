@@ -58,6 +58,8 @@ Evidence records the resolved shell, resolved working directory, exit status, a 
 
 `--status` parses and reports historical ledger state without executing a command or changing a file. It does not inspect current artifacts or revalidate old evidence, and the Stop hook has the same non-executing boundary. Use `--reverify` for parent verification: it executes every runnable gate, including gates already checked, and returns a gate to unmet when the oracle no longer passes. Its summary reports both all commands rerun and the subset that had previously been met.
 
+`--json` prints one machine-readable object on standard output and moves the human transcript to standard error, so a parent can read a verdict instead of matching a substring of a printed summary. It reports the same counts the text summary prints, from the same values, and it never suppresses the approval transcript: a caller must still be able to see the oracle it is consenting to. Use `EXPECT: /"verdict": "all-met"/` rather than matching `ALL MET`, which a gate title could contain by accident. The object appears on the verdict exits, `0` and `1`; usage, parse, and infrastructure failures report on standard error and exit `2` without it.
+
 ## Approval boundary
 
 `CHECK:` is executable shell code with the permissions and inherited environment of the checker. Parse inherited ledgers with `--status` and read their source. A normal run without an existing approval prints each resolved oracle and leaves it unexecuted. Execute only with explicit `--approve` after reviewing every command and called script.

@@ -886,6 +886,73 @@ test("posix integration: an exited shell leader still has its ordinary descendan
 
 let passed = 0;
 const failures = [];
+// Evidence timestamps: evidence answered what passed and where, but never when,
+// so a reader could not separate yesterday's green run from this morning's.
+
+const VERIFIED_AT = /verified-at=([^;]+)/;
+
+test("evidence: a passing gate records when it was verified", async () => {
+  const s = sandbox();
+  try {
+    s.write("check.mjs", "console.log('OK');\n");
+    s.write("GATES.md", gate("G1", "oracle", "node check.mjs", "OK"));
+    const result = await gateRun(s, []);
+    assert(result.code === 0, result.out);
+
+    const found = VERIFIED_AT.exec(readFileSync(join(s.dir, "GATES.md"), "utf8"));
+    assert(found, "evidence carries no verified-at field");
+    const stamp = found[1];
+    assert(stamp.endsWith("Z"), "the stamp must be UTC, got " + stamp);
+    const parsed = new Date(stamp);
+    assert(!Number.isNaN(parsed.getTime()), "the stamp must parse, got " + stamp);
+    // Generous, because a slow Windows runner still finishes well inside this.
+    assert(Math.abs(Date.now() - parsed.getTime()) < 5 * 60 * 1000,
+      "the stamp should be about now, got " + stamp);
+  } finally { s.cleanup(); }
+});
+
+test("evidence: re-verification moves the timestamp forward", async () => {
+  const s = sandbox();
+  try {
+    s.write("check.mjs", "console.log('OK');\n");
+    s.write("GATES.md", gate("G1", "oracle", "node check.mjs", "OK"));
+    assert((await gateRun(s, [])).code === 0);
+    const first = VERIFIED_AT.exec(readFileSync(join(s.dir, "GATES.md"), "utf8"))[1];
+
+    await new Promise((done) => setTimeout(done, 1100));
+    const again = await gateRun(s, ["--reverify"], { approve: false });
+    assert(again.code === 0, again.out);
+    const second = VERIFIED_AT.exec(readFileSync(join(s.dir, "GATES.md"), "utf8"))[1];
+
+    assert(second !== first, "re-verification must restamp, got " + second + " twice");
+    assert(new Date(second).getTime() > new Date(first).getTime(),
+      "the new stamp must be later: " + first + " then " + second);
+  } finally { s.cleanup(); }
+});
+
+test("evidence: the timestamp is not part of the approval identity", async () => {
+  const s = sandbox();
+  try {
+    // A stamp that changes on every run must not invalidate consent, or every
+    // re-verification would demand approval again and the option would be
+    // unusable in exactly the repeated-check workflow it exists to serve.
+    s.write("check.mjs", "console.log('OK');\n");
+    s.write("GATES.md", gate("G1", "oracle", "node check.mjs", "OK"));
+    assert((await gateRun(s, [])).code === 0);
+
+    const tokens = readdirSync(s.approvals).filter((name) => name.endsWith(".json"));
+    assert(tokens.length === 1, "expected one approval token, got " + tokens.length);
+    const token = JSON.parse(readFileSync(join(s.approvals, tokens[0]), "utf8"));
+    // Assert the behaviour rather than guessing at field names: a name check
+    // trips over timeoutMs, and what matters is that consent survives a restamp.
+    const again = await gateRun(s, ["--reverify"], { approve: false });
+    assert(again.code === 0, "a restamped run must reuse its approval: " + again.out);
+    assert(!again.out.includes("APPROVAL REQUIRED"), again.out);
+    assert(readdirSync(s.approvals).filter((name) => name.endsWith(".json")).length === 1,
+      "re-verification must not record a second approval");
+  } finally { s.cleanup(); }
+});
+
 for (const item of tests) {
   try {
     await item.fn();

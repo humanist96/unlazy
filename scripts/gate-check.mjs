@@ -580,6 +580,11 @@ function runCheck(task) {
     const settle = async (exitCode, signal) => {
       if (closed) return;
       closed = true;
+      // Stamped when the process closed, not when the ledger is written. Under
+      // --jobs several checks finish while their evidence is still queued in
+      // ledger order, and a write-time stamp would report one moment for all
+      // of them.
+      const finishedAt = new Date().toISOString();
       if (timeoutTimer) clearTimeout(timeoutTimer);
       if (closeStreamsTimer) clearTimeout(closeStreamsTimer);
       if (forceSettleTimer) clearTimeout(forceSettleTimer);
@@ -596,6 +601,7 @@ function runCheck(task) {
             : match.error || null;
       done({
         ...task, output, exitCode, signal, matched: Boolean(match.matched), error,
+        finishedAt,
         ok: !error && exitCode === 0 && Boolean(match.matched),
       });
     };
@@ -759,7 +765,15 @@ function failureOutput(output, max = 480) {
 function evidenceFor(result) {
   const clean = (value) => terminalSafe(value).replace(/[\r\n\t]+/g, " ");
   const fingerprint = outputFingerprint(result.output);
-  return ("exit=0; shell=" + clean(shell) + "; cwd=" + clean(result.cwd) +
+  // Placed early so it survives the 900-character cap, and specifically after
+  // the shell value: the line has always opened exit=0; shell=, and cwd can be
+  // long enough that a stamp behind it is the first thing a cap would drop. Evidence answered what
+  // passed and where, but never when, so a reader could not tell yesterday's
+  // green run from this morning's, and an auditor had only the ledger's file
+  // modification time to work from. This is the local system clock, which can
+  // be wrong or skewed; it orders and dates a run, it does not attest to one.
+  const verifiedAt = result.finishedAt || new Date().toISOString();
+  return ("exit=0; shell=" + clean(shell) + "; verified-at=" + verifiedAt + "; cwd=" + clean(result.cwd) +
     "; path=" + pathEvidence + "; EXPECT=matched; output-sha256=" + fingerprint.sha256 +
     "; output-bytes=" + fingerprint.bytes).slice(0, 900);
 }

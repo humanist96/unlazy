@@ -465,6 +465,35 @@ test("hook: meeting a gate resets the loop guard", async () => {
   } finally { s.cleanup(); }
 });
 
+test("hook: a restamped evidence line is not progress", async () => {
+  const s = sandbox();
+  try {
+    // Evidence now carries a verification timestamp, which changes on every
+    // single re-verification. If the loop guard noticed that, an agent could
+    // hold a session open forever by re-running the checker rather than by
+    // meeting anything, which is the precise failure the guard exists to stop.
+    const met = (stamp) =>
+      "- [x] G1: a\n  CHECK: node -e \"\"\n  EXPECT: x\n" +
+      "  EVIDENCE: verified-at=" + stamp + "; exit=0; EXPECT=matched\n\n";
+    const stamps = [
+      "2026-08-27T06:00:00.000Z", "2026-08-27T06:01:00.000Z", "2026-08-27T06:02:00.000Z",
+      "2026-08-27T06:03:00.000Z", "2026-08-27T06:04:00.000Z", "2026-08-27T06:05:00.000Z",
+    ];
+    s.write(".unlazy/api/gates/leaf-1.md", "# Gates\n\n" + met(stamps[0]) + gate("G2", "b", null, null));
+    const stdin = JSON.stringify({ cwd: s.dir });
+
+    for (let i = 0; i < 6; i++) {
+      const blocked = await run(STOP_HOOK, ["--scope", "api"], { cwd: s.dir, stdin });
+      assertHas(blocked.out, '"decision":"block"');
+      // Restamp between stops, exactly as a re-verification would.
+      s.write(".unlazy/api/gates/leaf-1.md",
+        "# Gates\n\n" + met(stamps[i]) + gate("G2", "b", null, null));
+    }
+    const released = await run(STOP_HOOK, ["--scope", "api"], { cwd: s.dir, stdin });
+    assertHas(released.out, "releasing after 6 blocks");
+  } finally { s.cleanup(); }
+});
+
 test("hook: no gate files anywhere means silence", async () => {
   const s = sandbox();
   try {

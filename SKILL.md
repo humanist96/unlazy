@@ -68,6 +68,7 @@ Remember that the checker proves only the declared command oracle. It cannot inf
 - Measure figures independently; do not copy a supplied number into `EXPECT:` as its own proof.
 - Review consequential manual gates with evidence proportional to risk. Try to make the riskiest outcome runnable, but do not claim that manual status and risk generally correlate.
 - Prefer portable Node scripts. Do not assume `grep`, `tail`, or `tr` exists on stock Windows.
+- For work whose deliverable is a document, a data file, or a batch log rather than code, use the ready-made oracles in the local `checks/README.md` instead of settling for a manual gate. They cover file freshness and digests, text encoding, CSV columns and two-source reconciliation, Word sections and leftover placeholders, Excel error cells, and batch-log completion. Korean ledger templates are `templates/gates-report-ko.md` and `templates/gates-recon-ko.md`.
 - Re-run with the same declared shell and required toolchain. Treat an environment mismatch as a failed verification, not as evidence.
 - Lint the ledger before working it, so an oracle that cannot fail is caught at authoring time rather than certified at report time:
 

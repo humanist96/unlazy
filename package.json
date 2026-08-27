@@ -5,7 +5,8 @@
   "description": "Regression tests for the unlazy skill's zero-dependency enforcement tools",
   "type": "module",
   "scripts": {
-    "test": "node tests/run-tests.mjs && node tests/dispatch-tests.mjs && node tests/hardening-tests.mjs && node tests/stress-tests.mjs && node tests/lint-tests.mjs && node tests/contract-tests.mjs && node tests/self-check.mjs"
+    "test": "node tests/run-tests.mjs && node tests/dispatch-tests.mjs && node tests/hardening-tests.mjs && node tests/stress-tests.mjs && node tests/lint-tests.mjs && node tests/contract-tests.mjs && node tests/self-check.mjs && npm run test:checks",
+    "test:checks": "node checks/tests/lib-tests.mjs && node checks/tests/checker-tests.mjs"
   },
   "engines": {
     "node": ">=16"

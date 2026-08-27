@@ -43,8 +43,8 @@ function replaceAtomic(temp, target) {
 }
 
 const GATE_RE = /^- \[( |x|X)\] (.*)$/;
-const ATTR_RE = /^(\s+)(CHECK|EXPECT|EVIDENCE|CWD):\s?(.*)$/;
-const UNINDENTED_ATTR_RE = /^(CHECK|EXPECT|EVIDENCE|CWD):\s?(.*)$/;
+const ATTR_RE = /^(\s+)(CHECK|EXPECT|EVIDENCE|CWD|DEPS):\s?(.*)$/;
+const UNINDENTED_ATTR_RE = /^(CHECK|EXPECT|EVIDENCE|CWD|DEPS):\s?(.*)$/;
 const ABANDON_RE = /^ABANDON:\s*(\S*)\s*(.*)$/;
 const INDENTED_ABANDON_RE = /^\s+ABANDON:/;
 const OWNS_RE = /^OWNS:\s*(.*)$/;
@@ -122,6 +122,7 @@ export function parseGates(text, options = {}) {
         evidence: null,
         evidenceLine: -1,
         cwd: null,
+        deps: null,
       };
       gates.push(current);
       attrs.set(current, new Set());
@@ -172,6 +173,20 @@ export function parseGates(text, options = {}) {
       if (key === "evidence") {
         current.evidence = value;
         current.evidenceLine = index;
+      } else if (key === "deps") {
+        // DEPS is a list, so it is normalised here rather than stored raw. A
+        // digest can only be taken of a concrete file, so each entry must name
+        // one, under the same relative-and-no-traversal rule OWNS uses.
+        const declared = value.split(",").map((item) => item.trim()).filter(Boolean);
+        if (!declared.length) {
+          errors.push("line " + (index + 1) + ": DEPS declares no paths for gate " + current.id);
+        }
+        current.deps = [];
+        for (const item of declared) {
+          const normalized = normalizeDepPath(item);
+          if (normalized.error) errors.push("line " + (index + 1) + ": " + normalized.error);
+          else current.deps.push(normalized.value);
+        }
       } else current[key] = value;
       continue;
     }
@@ -217,6 +232,12 @@ export function parseGates(text, options = {}) {
     }
     if (gate.check === "" || gate.expect === "") {
       errors.push("gate " + gate.id + ": CHECK and EXPECT cannot be blank");
+    }
+    // DEPS binds files into an oracle's approval identity, so a gate with no
+    // oracle has nothing to bind them to. Silently ignoring the declaration
+    // would leave an author believing a manual gate was pinned to a digest.
+    if (gate.deps !== null && !hasCheck) {
+      errors.push("gate " + gate.id + ": DEPS needs a CHECK; a manual gate has no command to bind");
     }
     if (hasExpect) {
       const parsed = parseRegex(gate.expect);
@@ -284,6 +305,28 @@ export function normalizeOwnsGlob(value) {
   }
   const normalized = parts.filter((part) => part !== "" && part !== ".").join("/");
   if (!normalized || normalized === ".") return { error: "OWNS path cannot claim an implicit root" };
+  return { value: normalized };
+}
+
+// A DEPS entry names one file whose bytes are hashed into an approval, so it
+// follows the OWNS path rules but additionally rejects glob metacharacters.
+// A pattern cannot be hashed, and expanding one at approval time would let the
+// set of bound files change silently as the working tree changes.
+export function normalizeDepPath(value) {
+  const raw = String(value || "").trim().replace(/\\/g, "/").replace(/^\.\//, "");
+  if (!raw) return { error: "DEPS path is blank" };
+  if (isAbsolute(raw) || /^[A-Za-z]:\//.test(raw) || raw.startsWith("//")) {
+    return { error: "DEPS path must be relative: " + value };
+  }
+  const parts = raw.split("/");
+  if (raw.includes("\0") || parts.some((part) => part === "..")) {
+    return { error: "DEPS path cannot contain traversal: " + value };
+  }
+  if (/[*?[\]{}]/.test(raw)) {
+    return { error: "DEPS path must name one file, not a pattern: " + value };
+  }
+  const normalized = parts.filter((part) => part !== "" && part !== ".").join("/");
+  if (!normalized || normalized === ".") return { error: "DEPS path cannot name the repository root" };
   return { value: normalized };
 }
 

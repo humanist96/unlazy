@@ -886,6 +886,114 @@ test("posix integration: an exited shell leader still has its ordinary descendan
 
 let passed = 0;
 const failures = [];
+// DEPS: approval binds the digests of files the gate names, so a rewritten
+// dependency stops running under a review that was given to different bytes.
+
+test("deps: rewriting a declared dependency invalidates the approval", async () => {
+  const s = sandbox();
+  try {
+    s.write("check.mjs", "console.log('OK');\n");
+    s.write("GATES.md", gate("G1", "oracle", "node check.mjs", "OK", "  DEPS: check.mjs\n"));
+    const first = await gateRun(s, []);
+    assert(first.code === 0, first.out);
+
+    // Same command text, different bytes behind it.
+    s.write("check.mjs", "console.log('OK');\nconsole.log('and something else');\n");
+    const changed = await gateRun(s, ["--reverify"], { approve: false });
+    assert(changed.code === 1, changed.out);
+    has(changed.out, "APPROVAL REQUIRED");
+    has(changed.out, "DEPS: check.mjs");
+  } finally { s.cleanup(); }
+});
+
+test("deps: a gate without DEPS keeps an approval recorded before the field existed", async () => {
+  const s = sandbox();
+  try {
+    s.write("check.mjs", "console.log('OK');\n");
+    s.write("GATES.md", gate("G1", "oracle", "node check.mjs", "OK"));
+    const first = await gateRun(s, []);
+    assert(first.code === 0, first.out);
+    const tokens = readdirSync(s.approvals).filter((name) => name.endsWith(".json"));
+    const token = JSON.parse(readFileSync(join(s.approvals, tokens[0]), "utf8"));
+    assert(!Object.prototype.hasOwnProperty.call(token.oracle, "deps"),
+      "a gate without DEPS must not add the key, or every existing approval breaks");
+
+    // Editing the dependency must not invalidate anything here: nothing was
+    // declared, so the documented boundary is unchanged for older ledgers.
+    s.write("check.mjs", "console.log('OK');\nconsole.log('changed');\n");
+    const again = await gateRun(s, ["--reverify"], { approve: false });
+    assert(again.code === 0, again.out);
+  } finally { s.cleanup(); }
+});
+
+test("deps: an unreadable dependency refuses to run instead of testing something else", async () => {
+  const s = sandbox();
+  try {
+    s.write("check.mjs", "console.log('OK');\n");
+    s.write("GATES.md", gate("G1", "oracle", "node check.mjs", "OK", "  DEPS: missing.mjs\n"));
+    const result = await gateRun(s, []);
+    assert(result.code === 1, result.out);
+    has(result.out, "MISSING DEPS");
+    assert(!/ PASS /.test(result.out), "must not execute with a missing declared dependency");
+  } finally { s.cleanup(); }
+});
+
+test("deps: distinct binary dependencies produce distinct approvals", async () => {
+  const s = sandbox();
+  try {
+    // These two differ only in bytes that a utf8 decode collapses, so hashing
+    // a decoded string instead of the buffer would make them one oracle.
+    const first = Buffer.from([0xff, 0xfe, 0x00, 0x80, 0x81]);
+    const second = Buffer.from([0xff, 0xfe, 0x00, 0x80, 0x82]);
+    s.write("check.mjs", "console.log('OK');\n");
+    writeFileSync(join(s.dir, "blob.bin"), first);
+    s.write("GATES.md", gate("G1", "oracle", "node check.mjs", "OK", "  DEPS: blob.bin\n"));
+    const one = await gateRun(s, []);
+    assert(one.code === 0, one.out);
+    const record = JSON.parse(readFileSync(join(s.approvals,
+      readdirSync(s.approvals).filter((name) => name.endsWith(".json"))[0]), "utf8"));
+    assert(record.oracle.deps[0].sha256.length === 64, "digest must be a full sha256");
+
+    writeFileSync(join(s.dir, "blob.bin"), second);
+    const two = await gateRun(s, ["--reverify"], { approve: false });
+    assert(two.code === 1, two.out);
+    has(two.out, "APPROVAL REQUIRED");
+  } finally { s.cleanup(); }
+});
+
+test("deps: unsafe declarations and manual gates fail closed", async () => {
+  const s = sandbox();
+  try {
+    s.write("check.mjs", "console.log('OK');\n");
+    for (const [declaration, needle] of [
+      ["  DEPS: ../escape.mjs\n", "traversal"],
+      ["  DEPS: /etc/passwd\n", "must be relative"],
+      ["  DEPS: scripts/*.mjs\n", "not a pattern"],
+    ]) {
+      s.write("GATES.md", gate("G1", "oracle", "node check.mjs", "OK", declaration));
+      const result = await gateRun(s, ["--status"]);
+      assert(result.code === 2, declaration + " -> " + result.out);
+      has(result.out, needle);
+    }
+    // DEPS binds an oracle, and a manual gate has none.
+    s.write("GATES.md", "- [ ] G1: manual\n  DEPS: check.mjs\n  EVIDENCE: pending\n");
+    const manual = await gateRun(s, ["--status"]);
+    assert(manual.code === 2, manual.out);
+    has(manual.out, "DEPS needs a CHECK");
+  } finally { s.cleanup(); }
+});
+
+test("deps: --status still reports when a declared dependency is missing", async () => {
+  const s = sandbox();
+  try {
+    s.write("check.mjs", "console.log('OK');\n");
+    s.write("GATES.md", gate("G1", "oracle", "node check.mjs", "OK", "  DEPS: gone.mjs\n"));
+    const result = await gateRun(s, ["--status"]);
+    assert(result.code === 1, result.out);
+    has(result.out, "UNMET");
+  } finally { s.cleanup(); }
+});
+
 for (const item of tests) {
   try {
     await item.fn();

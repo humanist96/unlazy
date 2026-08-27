@@ -61,7 +61,15 @@ if (!existsSync(source)) {
   console.error(SELF + ": source not found: " + source);
   process.exit(2);
 }
-const body = readFileSync(source);
+// The repository copy carries the <skill-dir> placeholder rather than a real
+// path, because this fork is public and a committed home directory is both
+// machine-specific and needlessly identifying. Substitution happens here, at
+// install time, so the installed copy still hands the agent a command it can
+// run verbatim. This script sits inside the skill, so its own location is the
+// answer: no configuration, and it stays correct if the skill is moved.
+const SKILL_DIR_PLACEHOLDER = "<skill-dir>";
+const body = Buffer.from(
+  readFileSync(source, "utf8").split(SKILL_DIR_PLACEHOLDER).join(repoRoot), "utf8");
 
 // Compare content, not line endings. Git checks this repository out with CRLF
 // on Windows, so a byte comparison against a file written with LF reports a

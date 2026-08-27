@@ -74,7 +74,7 @@ When speaking to the user, say "dispatch wave" for unlazy's barrier and
   wave, record every handle, seal, then wait. Re-verify each returned leaf with
   `--reverify`, never `--status`.
 - **`qa` persona activates** -> lint the ledger before working it:
-  `node C:\Users\Admin\.claude\skills\unlazy\scripts\gate-lint.mjs GATES.md`
+  `node <skill-dir>\scripts\gate-lint.mjs GATES.md`
   Absolute, because the default shell here is `cmd.exe`, which does not expand
   `~`. The skill's own documents carry the same resolved path.
 - **`architect` persona activates** -> fill the PLAN contract inventory before
@@ -85,7 +85,7 @@ When speaking to the user, say "dispatch wave" for unlazy's barrier and
 - **`/sc:spawn` depth** -> corresponds to unlazy's `tree N`. Split at natural
   boundaries only, while each leaf stays a coherent deliverable.
 - **Non-code deliverables** -> use the ready oracles in
-  `C:\Users\Admin\.claude\skills\unlazy\checks\README.md` (file freshness and digest, text
+  `<skill-dir>\checks\README.md` (file freshness and digest, text
   encoding including CP949, CSV columns and two-source reconciliation, Word
   sections and leftover placeholders, Excel error cells, batch log completion)
   instead of settling for a manual gate. Korean ledger templates:

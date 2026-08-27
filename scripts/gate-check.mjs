@@ -9,7 +9,7 @@ import {
 } from "node:fs";
 import { spawn } from "node:child_process";
 import { Worker } from "node:worker_threads";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { delimiter, dirname, basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -46,7 +46,8 @@ targeting:
   file ...               explicit regular ledger files; all are honored
 
 CHECK execution requires prior approval keyed to the exact CHECK, EXPECT,
-resolved CWD, resolved shell, timeout, output/regex limits, platform, and PATH.
+resolved CWD, resolved shell, timeout, output/regex limits, platform, PATH, and
+the digests of any files an optional indented DEPS: list names.
 Approvals live outside the repository under ~/.unlazy/approved by default.
 
 exit codes: 0 all met/action succeeded; 1 unmet; 2 usage/parse/infrastructure;
@@ -332,6 +333,34 @@ function resolvedGateCwd(gate, file) {
   return gate.cwd ? resolve(base, gate.cwd) : base;
 }
 
+// Approval binds the declared command, not the files that command runs, so a
+// reviewed `node verify.mjs` keeps its approval after verify.mjs is rewritten.
+// An optional DEPS list closes that for the files an author names: their
+// digests join the oracle, so changing one invalidates the approval exactly the
+// way editing the command does.
+//
+// Transitive inputs stay out of scope. Hashing what a script imports would need
+// a resolver per language and would still miss data files, so the boundary is
+// deliberately what the author declared rather than a guess at completeness.
+//
+// A missing or unreadable file records a null digest rather than throwing.
+// --status must keep working on a broken tree, and a null is a distinct oracle
+// value, so it invalidates approval on its own; runDeps below then refuses to
+// execute rather than testing something other than what was declared.
+function depDigests(gate) {
+  if (gate.deps === null) return undefined;
+  return gate.deps.map((path) => {
+    try {
+      // Hash the bytes, not a string. The shared sha256 helper coerces with
+      // String(), which utf8-decodes a Buffer and makes distinct binary files
+      // collide, so a dependency digest must not be routed through it.
+      return { path, sha256: createHash("sha256").update(readFileSync(resolve(root, path))).digest("hex") };
+    } catch {
+      return { path, sha256: null };
+    }
+  });
+}
+
 function oracle(file, gate) {
   const cwd = resolvedGateCwd(gate, file);
   return {
@@ -340,6 +369,9 @@ function oracle(file, gate) {
     expect: gate.expect,
     cwd,
     shell,
+    // Omitted entirely when no DEPS is declared, so ledgers that predate this
+    // field serialise byte for byte as before and keep their approvals.
+    deps: depDigests(gate),
     timeoutMs: timeoutSeconds * 1000,
     maxOutputBytes: MAX_OUTPUT_BYTES,
     regexTimeoutMs: REGEX_TIMEOUT_MS,
@@ -494,6 +526,14 @@ function printOracle(file, gate, prefix) {
   console.log("    CWD: " + value.cwd);
   console.log("    SHELL: " + value.shell);
   console.log("    PATH: " + pathTranscript);
+  if (value.deps) {
+    for (const dep of value.deps) {
+      console.log("    DEPS: " + dep.path + " sha256=" +
+        (dep.sha256 === null ? "(unreadable)" : dep.sha256.slice(0, 16)));
+    }
+    console.log("    NOTE: these digests are part of this approval; editing any"
+      + " of these files requires approving again");
+  }
 }
 
 let activeRegexWorkers = 0;
@@ -695,6 +735,20 @@ const runnable = [];
 const notRun = [];
 let approvalInfrastructureFailures = 0;
 for (const task of pending) {
+  // A declared dependency that cannot be read means the command would run
+  // against something other than what the gate declares. Refuse before the
+  // approval question, because approving an unreadable state would record a
+  // digest of nothing.
+  const declaredDeps = depDigests(task.gate);
+  const unreadable = declaredDeps ? declaredDeps.filter((dep) => dep.sha256 === null) : [];
+  if (unreadable.length) {
+    console.error("  MISSING DEPS " + qualify(task.file, task.gate.id) + ": "
+      + unreadable.map((dep) => dep.path).join(", "));
+    console.error("    a declared dependency could not be read, so this check cannot be trusted to"
+      + " test what the gate declares");
+    notRun.push(task);
+    continue;
+  }
   let approved = false;
   try { approved = approvalExists(task.file, task.gate); }
   catch (error) {

@@ -13,6 +13,7 @@ Scope: <one sentence describing the complete deliverable>
   CHECK: node scripts/verify-integration.mjs
   EXPECT: integration verification passed
   CWD: packages/example
+  DEPS: scripts/verify-integration.mjs
   EVIDENCE: pending
 
 - [ ] G3: <manual outcome that no command can decide>
@@ -25,6 +26,9 @@ Strict format:
 - Use a unique explicit id for every gate.
 - Indent CHECK, EXPECT, CWD, and EVIDENCE.
 - Give a runnable gate both CHECK and EXPECT; give a manual gate neither.
+- DEPS is optional and repository-relative. It binds the digest of each named
+  file into the approval, so editing that file requires approving again. Name
+  concrete files, not patterns, and only on a gate that has a CHECK.
 - Success requires process exit 0 and EXPECT.
 - Make EXPECT a success-only marker produced after every assertion passes.
 - For an absence or negative assertion, test the same checker against a known

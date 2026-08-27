@@ -994,6 +994,100 @@ test("deps: --status still reports when a declared dependency is missing", async
   } finally { s.cleanup(); }
 });
 
+// Output encoding: a check emits bytes, and turning them into text needs a
+// declared answer. A cp949 console is the Windows default across Korea, so
+// decoding its output as utf8 produces mojibake rather than an error, and a
+// Korean EXPECT stops matching text that is really there.
+
+// "정상 종료" as cp949 bytes, which is what a Korean console tool writes.
+const CP949_SOURCE =
+  "process.stdout.write(Buffer.from([0xc1,0xa4,0xbb,0xf3,0x20,0xc1,0xbe,0xb7,0xe1,0x0a]));\n";
+
+test("encoding: cp949 output fails a Korean EXPECT under the utf8 default", async () => {
+  const s = sandbox();
+  try {
+    s.write("emit.mjs", CP949_SOURCE);
+    s.write("GATES.md", gate("G1", "batch reports completion", "node emit.mjs", "정상 종료"));
+    const result = await gateRun(s, []);
+    assert(result.code === 1, "utf8 must not match cp949 bytes: " + result.out);
+  } finally { s.cleanup(); }
+});
+
+test("encoding: the same bytes match once cp949 is declared", async () => {
+  const s = sandbox();
+  try {
+    s.write("emit.mjs", CP949_SOURCE);
+    s.write("GATES.md", gate("G1", "batch reports completion", "node emit.mjs", "정상 종료"));
+    const result = await gateRun(s, ["--output-encoding", "cp949"]);
+    assert(result.code === 0, result.out);
+    has(result.out, "OUTPUT-ENCODING: cp949");
+  } finally { s.cleanup(); }
+});
+
+test("encoding: the declared encoding is bound into the approval", async () => {
+  const s = sandbox();
+  try {
+    s.write("emit.mjs", CP949_SOURCE);
+    s.write("GATES.md", gate("G1", "batch reports completion", "node emit.mjs", "정상 종료"));
+    const first = await gateRun(s, ["--output-encoding", "cp949"]);
+    assert(first.code === 0, first.out);
+
+    // Re-running under a different decode must not reuse that consent: the
+    // command is the same, but what EXPECT is compared against is not.
+    const changed = await gateRun(s, ["--reverify"], { approve: false });
+    has(changed.out, "APPROVAL REQUIRED");
+  } finally { s.cleanup(); }
+});
+
+test("encoding: the utf8 default leaves the oracle and evidence unchanged", async () => {
+  const s = sandbox();
+  try {
+    s.write("check.mjs", "console.log('OK');\n");
+    s.write("GATES.md", gate("G1", "oracle", "node check.mjs", "OK"));
+    const result = await gateRun(s, []);
+    assert(result.code === 0, result.out);
+
+    const tokens = readdirSync(s.approvals).filter((name) => name.endsWith(".json"));
+    const token = JSON.parse(readFileSync(join(s.approvals, tokens[0]), "utf8"));
+    assert(!Object.prototype.hasOwnProperty.call(token.oracle, "outputEncoding"),
+      "the default must not add the key, or every approval recorded before it breaks");
+
+    const ledger = readFileSync(join(s.dir, "GATES.md"), "utf8");
+    assert(!ledger.includes("output-encoding="),
+      "the default must not add an evidence field either");
+  } finally { s.cleanup(); }
+});
+
+test("encoding: a non-default decode is recorded in evidence", async () => {
+  const s = sandbox();
+  try {
+    s.write("emit.mjs", CP949_SOURCE);
+    s.write("GATES.md", gate("G1", "batch reports completion", "node emit.mjs", "정상 종료"));
+    const result = await gateRun(s, ["--output-encoding", "cp949"]);
+    assert(result.code === 0, result.out);
+    const ledger = readFileSync(join(s.dir, "GATES.md"), "utf8");
+    assert(ledger.includes("output-encoding=cp949"), ledger);
+  } finally { s.cleanup(); }
+});
+
+test("encoding: an unknown encoding and status-mode use fail closed", async () => {
+  const s = sandbox();
+  try {
+    s.write("check.mjs", "console.log('OK');\n");
+    s.write("GATES.md", gate("G1", "oracle", "node check.mjs", "OK"));
+
+    const unknown = await gateRun(s, ["--output-encoding", "latin1"], { approve: false });
+    assert(unknown.code === 2, unknown.out);
+    has(unknown.out, "accepts utf8 or cp949");
+
+    // Status never executes, so it never decodes; accepting the option there
+    // would imply it affects a report that it cannot affect.
+    const status = await gateRun(s, ["--status", "--output-encoding", "cp949"]);
+    assert(status.code === 2, status.out);
+    has(status.out, "execution options only");
+  } finally { s.cleanup(); }
+});
+
 for (const item of tests) {
   try {
     await item.fn();

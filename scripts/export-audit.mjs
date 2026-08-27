@@ -379,7 +379,7 @@ function csvCell(value) {
 function renderCsv() {
   const header = [
     "원장", "게이트ID", "제목", "상태", "검증방식", "CHECK", "EXPECT",
-    "종료코드", "EXPECT일치", "출력해시", "승인시각", "포기사유",
+    "종료코드", "EXPECT일치", "출력해시", "검증시각", "승인시각", "포기사유",
   ];
   const rows = [header.map(csvCell).join(",")];
   for (const ledger of ledgers) {
@@ -397,6 +397,7 @@ function renderCsv() {
         evidence.exit,
         evidence.EXPECT,
         evidence["output-sha256"],
+        evidence["verified-at"],
         approval ? approval.approvedAt : "",
         gate.abandonReason,
       ].map(csvCell).join(","));
@@ -446,8 +447,8 @@ function renderMarkdown() {
     out.push("");
     out.push("경로: `" + ledger.path + "`");
     out.push("");
-    out.push("| 게이트 | 제목 | 상태 | 방식 | 종료코드 | EXPECT | 출력 해시 | 승인 시각 |");
-    out.push("|---|---|---|---|---|---|---|---|");
+    out.push("| 게이트 | 제목 | 상태 | 방식 | 종료코드 | EXPECT | 출력 해시 | 검증 시각 | 승인 시각 |");
+    out.push("|---|---|---|---|---|---|---|---|---|");
     for (const gate of ledger.gates) {
       const evidence = gate.evidence ? gate.evidence.fields : {};
       const approval = approvalFor(ledger.path, gate.id)[0];
@@ -459,6 +460,7 @@ function renderMarkdown() {
         evidence.exit || "-",
         evidence.EXPECT || "-",
         evidence["output-sha256"] ? "`" + String(evidence["output-sha256"]).slice(0, 12) + "`" : "-",
+        evidence["verified-at"] || "-",
         approval ? approval.approvedAt : "-",
       ].join(" | ") + " |");
     }
@@ -564,8 +566,10 @@ function renderMarkdown() {
   out.push("");
   out.push("- **게이트 제목이 명령이 실제로 측정한 것을 서술하는지.** 체커는 선언된");
   out.push("  명령만 증명하며, 한국어 제목과 셸 코드가 같은 뜻인지는 판단하지 못한다.");
-  out.push("- **게이트가 언제 통과했는지.** EVIDENCE에는 실행 시각이 기록되지 않는다.");
-  out.push("  원장 파일 수정 시각과 상태 로그가 유일한 근사치다.");
+  out.push("- **검증 시각이 정확한 시간임을.** 각 게이트의 verified-at은 검증이 끝난");
+  out.push("  시점을 그 머신의 로컬 시계로 읽은 값이다. 시계가 틀렸거나 표준시와 어긋나");
+  out.push("  있으면 그대로 어긋난 값이 남는다. 순서와 날짜를 알려줄 뿐 시각을 증명하지");
+  out.push("  않는다. verified-at이 없는 항목은 이 필드가 생기기 전에 기록된 증거다.");
   out.push("- **누가 검토했는지.** 위 생성 계정은 이 자료를 뽑은 계정이지, 각 게이트를");
   out.push("  사람이 검토했다는 증거가 아니다. 승인 레코드에도 사용자 필드가 없다.");
   out.push("- **명령이 호출한 스크립트가 승인 당시와 같은 바이트인지.** 승인은 명령");

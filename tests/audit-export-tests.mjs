@@ -72,7 +72,7 @@ check("md: reports the measured state counts",
 check("md: carries the abandonment reason verbatim",
   md.out.includes("연동 대상 시스템이 폐기되어 확인 불가"));
 check("md: states what the artefact cannot prove",
-  md.out.includes("증명하지 못하는 것") && md.out.includes("EVIDENCE에는 실행 시각이 기록되지 않는다"));
+  md.out.includes("증명하지 못하는 것") && md.out.includes("verified-at은 검증이 끝난"));
 check("md: includes an integrity manifest with a digest",
   md.out.includes("무결성 매니페스트") && /\| ledger \|/.test(md.out));
 

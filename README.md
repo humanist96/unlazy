@@ -28,10 +28,9 @@ Manual locations:
 
 ```text
 Claude Code:  ~/.claude/skills/unlazy
-Codex CLI:    ~/.codex/skills/unlazy
 ```
 
-Clone the repository into the relevant directory. Invoke it as `/unlazy` where slash skills are supported, `$unlazy` in Codex, or by a natural-language trigger from the skill description.
+Clone the repository into the relevant directory. Invoke it as `/unlazy` where slash skills are supported, or by a natural-language trigger from the skill description.
 
 The core is [SKILL.md](SKILL.md). The checker and optional hook require Node 16 or newer and use no third-party runtime packages.
 
@@ -184,7 +183,6 @@ Contributor history and pull-request links are recorded in [CHANGELOG.md](CHANGE
 ```text
 SKILL.md                         core instructions and mode routing
 SECURITY.md                      CHECK, shell, approval, hook, and lease threat model
-agents/openai.yaml               skill UI metadata
 references/gates.md              strict format, approval, shell, and authoring rules
 references/method.md             Depth Tree decomposition method
 references/orchestration.md      states, rolling dispatch, and verification hierarchy

@@ -18,7 +18,7 @@ Thanks for improving unlazy. Keep changes focused, testable, portable, and hones
 4. **Treat `CHECK:` as code.** Preserve explicit approval, approval invalidation, and non-executing status behavior. Do not weaken the trust boundary for convenience.
 5. **Keep Node 16 compatibility and zero runtime dependencies.** Use Node standard-library APIs available on the supported floor. Test Windows, macOS, and Linux behavior when changing shell, path, newline, file-lock, or installer code.
 6. **Make claims exact.** Use primary research or official platform documentation when available. Distinguish a checkpoint metric from end-to-end success, an overall fit from a subset fit, and exploratory observations from reproducible results.
-7. **Keep skill metadata valid.** `SKILL.md` frontmatter contains only `name` and a trigger-rich third-person `description`. Keep `agents/openai.yaml` aligned and do not add icon paths without real assets.
+7. **Keep skill metadata valid.** `SKILL.md` frontmatter contains only `name` and a trigger-rich third-person `description`. Do not add icon paths without real assets.
 8. **Use imperative skill prose and progressive disclosure.** Keep core workflow in `SKILL.md`; put detailed contracts in directly linked references.
 9. **Use no em dash or en dash.** Use a hyphen, colon, or sentence break.
 10. **Preserve unrelated user configuration.** Installer changes must validate container shapes, update atomically, and remove only unlazy's own handlers.

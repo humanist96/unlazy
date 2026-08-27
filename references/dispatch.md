@@ -45,18 +45,6 @@ node <skill-dir>/scripts/dispatch-check.mjs status --scope <scope> --wave ready-
 
 The state loader requires string ids, handles, and abandonment reasons plus a possible transition history: returns require an all-started sealed wave, terminal timestamps must exist and follow prior transitions, and a fully returned wave must be complete. Hand-editing an impossible terminal state fails closed. The primary `gate-check.mjs --scope <scope>` reduction includes this aggregate state and cannot print `ALL MET` while a wave is open, sealed, abandoned, or invalid.
 
-## Codex adapter
-
-[Current Codex releases support parallel subagents](https://developers.openai.com/codex/agent-configuration/subagents). Use the native subagent tools available in the host. When the tools are named `spawn_agent` and `wait_agent`, follow this exact order:
-
-1. call `spawn_agent` once for each leaf in the open wave
-2. record each returned agent id with `dispatch-check start`
-3. seal the wave
-4. call `wait_agent` only after seal
-5. record each completion with `dispatch-check return`, then reverify it
-
-Do not use `codex exec` as a substitute. It creates a separate CLI process rather than a native subagent owned and visible through the current host.
-
 ## Claude Code adapter
 
 [Claude Code background subagents run concurrently](https://code.claude.com/docs/en/sub-agents#run-subagents-in-foreground-or-background). Launch every leaf as a background `Agent` task, record every returned task or agent id, and seal before reading any result. Do not issue foreground Agent calls one after another.

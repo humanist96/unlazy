@@ -1,6 +1,6 @@
 ---
 name: unlazy
-description: Enforces completion discipline for substantial autonomous work by writing acceptance gates before execution, decomposing work with the Depth Tree, running approved checks, and re-verifying evidence before reporting. Use when Codex faces a long or multi-part task, work that has returned half-done, an exhaustive audit or build, parallel leaves or pipelines, or explicit triggers such as /unlazy, $unlazy, "tree N", "gates", and "do not stop until it is done".
+description: Enforces completion discipline for substantial autonomous work by writing acceptance gates before execution, decomposing work with the Depth Tree, running approved checks, and re-verifying evidence before reporting. Use when Claude Code faces a long or multi-part task, work that has returned half-done, an exhaustive audit or build, or parallel leaves or pipelines. Explicit triggers include /unlazy, "tree N", "gates", "do not stop until it is done", and Korean phrases such as "게이트", "게이트 걸고", "끝까지 완료해", "검증하고 보고해", "대충 하지 마", "완료 증명해".
 ---
 
 # Unlazy

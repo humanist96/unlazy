@@ -1,0 +1,6 @@
+# Pinned upstream commit for this fork (see README "pin an exact commit").
+# Update after each verified rebase: git fetch upstream && git rebase upstream/main personal && npm test
+upstream: https://github.com/Leonxlnx/unlazy
+pinned-commit: da0b00a3a6b706b471797cd4ef579ae1001ff6d7
+pinned-date: 2026-08-27
+verified: npm test 146/146 passed on Windows 11 / Node 22

@@ -57,7 +57,7 @@ node <path-to-skill>/scripts/gate-check.mjs GATES.md
 
 Do not treat normal mode as a permanent dry run: once the exact oracle is approved, normal mode can execute it.
 
-`CHECK:` lines are shell code. After reading every command and called script, approve and run the ledger:
+`CHECK:` lines are shell code. After reading every command and called script, approve and run the ledger. Add `--gate <id>`, repeatable, to approve and run one gate at a time; the printed verdict still covers every gate, so a narrowed run cannot certify a subset:
 
 ```text
 node <path-to-skill>/scripts/gate-check.mjs --approve GATES.md

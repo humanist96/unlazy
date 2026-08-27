@@ -17,7 +17,7 @@ Treat `CHECK:` as code. Before executing an inherited ledger, parse it without r
 node <skill-dir>/scripts/gate-check.mjs --status GATES.md
 ```
 
-Approve only commands you wrote or understand, then run them explicitly:
+Approve only commands you wrote or understand, then run them explicitly. Add `--gate <id>` to consent to one oracle at a time rather than to every pending oracle in the file:
 
 ```text
 node <skill-dir>/scripts/gate-check.mjs --approve GATES.md

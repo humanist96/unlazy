@@ -886,6 +886,126 @@ test("posix integration: an exited shell leader still has its ordinary descendan
 
 let passed = 0;
 const failures = [];
+// --gate: approving a ledger approved every pending oracle in it at once, so
+// "approve only commands you wrote or understand" was true of the reviewer's
+// intent and false of the command they actually ran.
+
+const twoRunnable = () =>
+  "# Gates: two runnable\n\n" +
+  gate("G1", "first outcome", "node a.mjs", "OK") +
+  gate("G2", "second outcome", "node b.mjs", "OK");
+
+test("gate: only the named gate is approved and run", async () => {
+  const s = sandbox();
+  try {
+    s.write("a.mjs", "console.log('OK');\n");
+    s.write("b.mjs", "console.log('OK');\n");
+    s.write("GATES.md", twoRunnable());
+
+    await gateRun(s, ["--gate", "G1"]);
+    const tokens = readdirSync(s.approvals).filter((name) => name.endsWith(".json"));
+    assert(tokens.length === 1, "expected one approval, got " + tokens.length);
+    assert(JSON.parse(readFileSync(join(s.approvals, tokens[0]), "utf8")).gate === "G1",
+      "the wrong gate was approved");
+
+    const ledger = readFileSync(join(s.dir, "GATES.md"), "utf8");
+    assert(/- \[x\] G1:/.test(ledger), "G1 should be met: " + ledger);
+    assert(/- \[ \] G2:/.test(ledger), "G2 must stay untouched: " + ledger);
+  } finally { s.cleanup(); }
+});
+
+test("gate: narrowing the run never narrows the verdict", async () => {
+  const s = sandbox();
+  try {
+    // The point of the whole flag. Reducing the summary to the selected gates
+    // would let --gate G1 print ALL MET while G2 sits unmet, which is a
+    // completion certificate for a subset.
+    s.write("a.mjs", "console.log('OK');\n");
+    s.write("b.mjs", "console.log('OK');\n");
+    s.write("GATES.md", twoRunnable());
+
+    const result = await gateRun(s, ["--gate", "G1"]);
+    assert(result.code === 1, "a partial run must not exit 0: " + result.out);
+    assert(!result.out.includes("ALL MET"), result.out);
+    has(result.out, "UNMET");
+    has(result.out, "ran only G1");
+
+    // Approving the second one completes the ledger, and only then.
+    const rest = await gateRun(s, ["--gate", "G2"]);
+    assert(rest.code === 0, rest.out);
+    has(rest.out, "ALL MET");
+  } finally { s.cleanup(); }
+});
+
+test("gate: repeated selections accumulate", async () => {
+  const s = sandbox();
+  try {
+    s.write("a.mjs", "console.log('OK');\n");
+    s.write("b.mjs", "console.log('OK');\n");
+    s.write("GATES.md", twoRunnable());
+    const result = await gateRun(s, ["--gate", "G1", "--gate", "G2"]);
+    assert(result.code === 0, result.out);
+    assert(readdirSync(s.approvals).filter((name) => name.endsWith(".json")).length === 2,
+      "both gates should be approved");
+  } finally { s.cleanup(); }
+});
+
+test("gate: an unknown id fails closed instead of running nothing quietly", async () => {
+  const s = sandbox();
+  try {
+    s.write("a.mjs", "console.log('OK');\n");
+    s.write("b.mjs", "console.log('OK');\n");
+    s.write("GATES.md", twoRunnable());
+    const result = await gateRun(s, ["--gate", "G9"]);
+    assert(result.code === 2, result.out);
+    has(result.out, "names no gate");
+    assert(readdirSync(s.approvals).filter((name) => name.endsWith(".json")).length === 0,
+      "nothing should have been approved");
+  } finally { s.cleanup(); }
+});
+
+test("gate: a bare id repeated across ledgers must be qualified", async () => {
+  const s = sandbox();
+  try {
+    // Selecting both silently would approve an oracle the reviewer never asked
+    // to see, which is the failure this flag exists to remove.
+    s.write("a.mjs", "console.log('OK');\n");
+    s.write("b.mjs", "console.log('OK');\n");
+    s.write("one.md", twoRunnable());
+    s.write("two.md", twoRunnable());
+
+    const ambiguous = await gateRun(s, ["--gate", "G1", "one.md", "two.md"]);
+    assert(ambiguous.code === 2, ambiguous.out);
+    has(ambiguous.out, "ambiguous");
+    has(ambiguous.out, "one:G1");
+    has(ambiguous.out, "two:G1");
+
+    const qualified = await gateRun(s, ["--gate", "two:G1", "one.md", "two.md"]);
+    has(qualified.out, "ran only two:G1");
+    const approved = readdirSync(s.approvals)
+      .filter((name) => name.endsWith(".json"))
+      .map((name) => JSON.parse(readFileSync(join(s.approvals, name), "utf8")));
+    assert(approved.length === 1, "expected one approval, got " + approved.length);
+    assert(approved[0].file.endsWith("two.md"), "the wrong ledger was approved: " + approved[0].file);
+  } finally { s.cleanup(); }
+});
+
+test("gate: the flag is refused where nothing executes", async () => {
+  const s = sandbox();
+  try {
+    s.write("a.mjs", "console.log('OK');\n");
+    s.write("b.mjs", "console.log('OK');\n");
+    s.write("GATES.md", twoRunnable());
+
+    const status = await gateRun(s, ["--status", "--gate", "G1"]);
+    assert(status.code === 2, status.out);
+    has(status.out, "execution options only");
+
+    const action = await gateRun(s, ["--gate", "G1", "--claim", "--scope", "api"], { approve: false });
+    assert(action.code === 2, action.out);
+  } finally { s.cleanup(); }
+});
+
 for (const item of tests) {
   try {
     await item.fn();

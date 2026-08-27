@@ -62,14 +62,22 @@ if (!existsSync(source)) {
   process.exit(2);
 }
 const body = readFileSync(source);
-const digest = (buffer) => createHash("sha256").update(buffer).digest("hex").slice(0, 12);
+
+// Compare content, not line endings. Git checks this repository out with CRLF
+// on Windows, so a byte comparison against a file written with LF reports a
+// difference on every run and trains the reader to ignore the warning. The
+// digest is taken over normalised text for the same reason: it has to mean the
+// same thing on both platforms.
+const normalise = (buffer) => Buffer.from(buffer.toString("utf8").replace(/\r\n/g, "\n"), "utf8");
+const digest = (buffer) => createHash("sha256").update(normalise(buffer)).digest("hex").slice(0, 12);
+const sameContent = (a, b) => normalise(a).equals(normalise(b));
 
 const target = join(targetDir, "UNLAZY-BRIDGE.md");
 if (!existsSync(targetDir)) mkdirSync(targetDir, { recursive: true });
 
 if (existsSync(target)) {
   const installed = readFileSync(target);
-  if (installed.equals(body)) {
+  if (sameContent(installed, body)) {
     console.log(SELF + ": already current at " + target + " (" + digest(body) + ")");
   } else if (!force) {
     console.error(SELF + ": installed copy differs from the repository copy");
